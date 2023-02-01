@@ -248,7 +248,8 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void startTheParser(Uri selectedUriDir) {
-    LogParser logParser = LogParser(selectedUriDir: selectedUriDir);
+    LogParser logParser =
+        LogParser(selectedUriDir: selectedUriDir, marvelAccID: playerID);
     logParser.startParser();
   }
 
