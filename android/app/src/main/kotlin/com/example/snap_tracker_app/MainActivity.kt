@@ -1,4 +1,4 @@
-package com.example.snap_tracker_app
+package com.mtgarenapro.snap_tracker_app
 
 import io.flutter.embedding.android.FlutterActivity
 

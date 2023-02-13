@@ -4,6 +4,7 @@ class ParsingMetadata {
   final List<String> FilesToParse;
   final Map<String, List<String>> Variables;
   final Map<String, List<String>> ExtractFromFiles;
+  final Map<String, List<String>> ResolveRefs;
   final Map<String, Map<String, List<String>>> GatherFromArray;
   final Map<String, List<String>> ExtractFromFilesCombo;
   final List<String> sendToServer;
@@ -14,6 +15,7 @@ class ParsingMetadata {
     required this.FilesToParse,
     required this.Variables,
     required this.ExtractFromFiles,
+    required this.ResolveRefs,
     required this.GatherFromArray,
     required this.ExtractFromFilesCombo,
     required this.sendToServer,
@@ -31,6 +33,9 @@ class ParsingMetadata {
       ExtractFromFiles: (json['ExtractFromFiles'] as Map).map((key, value) =>
           MapEntry(key as String,
               (value as List).map((item) => item as String).toList())),
+      ResolveRefs: (json['ResolveRefs'] as Map).map((key, value) => MapEntry(
+          key as String,
+          (value as List).map((item) => item as String).toList())),
       GatherFromArray: (json['GatherFromArray'] as Map).map(
           (keyOuter, valueOuter) => MapEntry(
               keyOuter as String,

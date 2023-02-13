@@ -2,68 +2,128 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_storage/saf.dart';
 import 'parsing_metadata_model.dart';
 
 class LogParser {
-  LogParser({required this.selectedUriDir, required this.marvelAccID})
-      : super();
+  LogParser() : super();
 
   ParsingMetadata? parsingMetadata;
-  Uri selectedUriDir;
-  String marvelAccID;
-  Map<String, DateTime?> updateDates = {};
-  Map<String, DateTime?> updateDatesPrevious = {};
+  Uri? selectedUriDir;
+  String? marvelAccID;
 
-  Future<void> startParser() async {
-    print("strating parser!");
-    final response = await http.get(
-        Uri.parse('https://marvelsnap.pro/snap/json/parsing_metadata.json'));
-    if (response.statusCode == 200) {
-      parsingMetadata = ParsingMetadata.fromJson(jsonDecode(response.body));
-      _ParserLoop();
+  Future<void> runParser(bool firstRun) async {
+    //print("starting parser!!!");
+    final pref = await SharedPreferences.getInstance();
+    final storedParsingMetadata = pref.getString('parsing_metadata');
+    String textualParsingMetadata = '';
+    if (storedParsingMetadata == null) {
+      final response = await http.get(
+          Uri.parse('https://marvelsnap.pro/snap/json/parsing_metadata.json'));
+
+      if (response.statusCode != 200) {
+        return;
+      }
+      await pref.setString('parsing_metadata', response.body);
+      textualParsingMetadata = response.body;
+    } else {
+      //print('loading metadata from perf');
+      textualParsingMetadata = storedParsingMetadata;
     }
+
+    final scopeStoragePersistUrl = pref.getString('gameDataUri');
+    if (scopeStoragePersistUrl == null) {
+      return;
+    }
+    final uriDir = Uri.parse(scopeStoragePersistUrl);
+    final playerID = pref.getString('snapId');
+    if (playerID == null) {
+      return;
+    }
+
+    selectedUriDir = uriDir;
+    marvelAccID = playerID;
+    parsingMetadata =
+        ParsingMetadata.fromJson(jsonDecode(textualParsingMetadata));
+    await _ParserLoop(firstRun);
   }
 
   void setUri(Uri uriToSet) {
     selectedUriDir = uriToSet;
   }
 
-  Future<void> _ParserLoop() async {
-    if (parsingMetadata == null) {
+  Future<void> _ParserLoop(bool firstRun) async {
+    //print("strating loop!");
+    /*print(selectedUriDir);
+    print(marvelAccID);*/
+    if (parsingMetadata == null ||
+        selectedUriDir == null ||
+        marvelAccID == null) {
       return;
     }
-
+    final pref = await SharedPreferences.getInstance();
     Map<String, dynamic> parsedResults = {};
     Map<String, int> variables = {};
 
+    final updateDatesTextual = pref.getString('updateDates');
+    final updateDatesPreviousTextual = pref.getString('updateDatesPrevious');
+
+    Map<String, String?> updateDates = {};
+
+    if (updateDatesTextual != null) {
+      updateDates = (json.decode(updateDatesTextual) as Map)
+          .map((key, value) => MapEntry(key as String, value?.toString()));
+    }
+
+    Map<String, String?> updateDatesPrevious = {};
+
+    DateTime? biggestDate;
+
+    if (updateDatesPreviousTextual != null) {
+      updateDatesPrevious = (json.decode(updateDatesPreviousTextual) as Map)
+          .map((key, value) => MapEntry(key as String, value?.toString()));
+    }
+
     for (var fileToParse in parsingMetadata!.FilesToParse) {
-      print(fileToParse);
-      final existingFile = await findFile(selectedUriDir, fileToParse);
+      //print(fileToParse);
+      final existingFile = await findFile(selectedUriDir!, fileToParse);
 
       if (existingFile == null) {
         continue;
       }
       final lastModifiedDate = existingFile.lastModified;
+
+      if (biggestDate == null ||
+          (biggestDate.compareTo(lastModifiedDate!) < 0)) {
+        biggestDate = lastModifiedDate;
+      }
+
+      //print(lastModifiedDate);
       bool needToParse = false;
       if (updateDates.containsKey(fileToParse) && lastModifiedDate != null) {
-        if (updateDates[fileToParse]!.compareTo(lastModifiedDate) < 0) {
+        if (DateTime.parse(updateDates[fileToParse]!)
+                .compareTo(lastModifiedDate) <
+            0) {
           needToParse = true;
           updateDatesPrevious[fileToParse] = updateDates[fileToParse];
-          updateDates[fileToParse] = lastModifiedDate;
+          updateDates[fileToParse] = lastModifiedDate.toIso8601String();
         }
       } else {
         needToParse = true;
         updateDatesPrevious[fileToParse] = updateDates[fileToParse];
-        updateDates[fileToParse] = lastModifiedDate;
+        updateDates[fileToParse] = lastModifiedDate!.toIso8601String();
       }
 
-      if (!needToParse) {
+      //print(needToParse);
+      if (!needToParse && !firstRun) {
+        //print('nothing changed!');
         continue;
       }
 
       final contents = await existingFile.getContentAsString();
-
+      //print(contents);
       if (contents == null) {
         continue;
       }
@@ -72,137 +132,204 @@ class LogParser {
       dynamic data = await json.decode(contents.substring(bracketOpen));
 
       //-----------VARIABLES-------------
-      parsingMetadata!.Variables.forEach((VariableName, pathList) {
-        if (pathList[0] != fileToParse) {
-          return;
-        }
-        print(VariableName);
-        List<dynamic> interestingThing =
-            (extractValue(data, pathList.sublist(1), null) as List)
-                .map((item) => item as dynamic)
-                .toList();
-        print(interestingThing);
+      //print('Variables');
+      try {
+        parsingMetadata!.Variables.forEach((VariableName, pathList) {
+          if (pathList[0] != fileToParse) {
+            return;
+          }
+          //print(VariableName);
+          List<dynamic> interestingThing =
+              (extractValue(data, pathList.sublist(1), null) as List)
+                  .map((item) => item as dynamic)
+                  .toList();
+          //print(interestingThing);
 
-        switch (VariableName) {
-          case 'PLAYER_ID':
-            int i = 0;
-            for (var extractedElement in interestingThing) {
-              List<String> addedPath = [i.toString(), 'AccountId'];
-              print([...pathList, ...addedPath]);
-              String? extractedAccountID = extractValue(
-                  data, [...pathList.sublist(1), ...addedPath], null);
+          switch (VariableName) {
+            case 'PLAYER_ID':
+              int i = 0;
+              for (var extractedElement in interestingThing) {
+                List<String> addedPath = [i.toString(), 'AccountId'];
+                //print([...pathList, ...addedPath]);
+                String? extractedAccountID = extractValue(
+                    data, [...pathList.sublist(1), ...addedPath], null);
 
-              print(extractedAccountID);
-              if (extractedAccountID != null &&
-                  extractedAccountID == marvelAccID) {
-                variables[VariableName] = i;
-                variables['OPPONENT_ID'] = i == 0 ? 1 : 0;
-                variables['PLAYER_NUM'] = i == 0 ? 1 : 2;
-                variables['OPPONENT_NUM'] = i == 0 ? 2 : 1;
+                //print(extractedAccountID);
+                if (extractedAccountID != null &&
+                    extractedAccountID == marvelAccID) {
+                  variables[VariableName] = i;
+                  variables['OPPONENT_ID'] = i == 0 ? 1 : 0;
+                  variables['PLAYER_NUM'] = i == 0 ? 1 : 2;
+                  variables['OPPONENT_NUM'] = i == 0 ? 2 : 1;
+                }
+                i++;
               }
-              i++;
-            }
-            break;
-        }
-      });
+              break;
+          }
+        });
+      } catch (e) {
+        //print(e.toString());
+      }
       /*print('Variables!');
       print(variables);*/
 
       //-----------Direct extraction-------------
-      parsingMetadata!.ExtractFromFiles.forEach((dataObjectName, pathList) {
-        if (pathList[0] != fileToParse) {
-          return;
-        }
-        //print(dataObjectName);
-        var interestingThing =
-            extractValue(data, pathList.sublist(1), variables);
-        parsedResults[dataObjectName] = interestingThing;
-        //print(interestingThing);
-      });
+      //print('ExtractFromFiles');
+      try {
+        parsingMetadata!.ExtractFromFiles.forEach((dataObjectName, pathList) {
+          if (pathList[0] != fileToParse) {
+            return;
+          }
+          //print(dataObjectName);
+          var interestingThing =
+              extractValue(data, pathList.sublist(1), variables);
+          parsedResults[dataObjectName] = interestingThing;
+          //print(interestingThing);
+        });
+      } catch (e) {
+        //print(e.toString());
+      }
+
+      //-----------Resolve Refs-------------
+      //print('ResolveRefs');
+      try {
+        parsingMetadata!.ResolveRefs.forEach((dataObjectName, pathList) {
+          if (pathList[0] != fileToParse) {
+            return;
+          }
+          List<String> pathTointerestingThing = pathList.sublist(1);
+          List<dynamic>? interestingThing =
+              extractValue(data, pathList.sublist(1), variables);
+
+          if (interestingThing != null) {
+            for (int i = 0; i < interestingThing.length; i++) {
+              Map<String, dynamic> ResolvedArrayElement = extractValue(
+                  data, [...pathTointerestingThing, i.toString()], variables);
+              parsedResults[dataObjectName] = ResolvedArrayElement;
+            }
+          }
+          //print(interestingThing);
+        });
+      } catch (e) {
+        //print(e.toString());
+      }
 
       //-----------Gather From Array-------------
-      parsingMetadata!.GatherFromArray
-          .forEach((dataObjectName, arrayParseInstructions) {
-        if (arrayParseInstructions['path']![0] != fileToParse) {
-          return;
-        }
+      //print('GatherFromArray');
 
-        List<String> pathToInterestingArray =
-            arrayParseInstructions['path']!.sublist(1);
-        List<dynamic> interestingArray =
-            extractValue(data, pathToInterestingArray, variables);
-        List<String> attrsToGet = arrayParseInstructions['attrsToGet'] ?? [];
-        //print(interestingArray);
-        for (int i = 0; i < interestingArray.length; i++) {
-          Map<String, dynamic> gatheredResult = {};
-          List<String> IndexAddition = [i.toString()];
-          Map<String, dynamic> ResolvedArrayElement = extractValue(
-              data, [...pathToInterestingArray, ...IndexAddition], variables);
-          //print(ResolvedArrayElement);
-          for (var attrToGet in attrsToGet) {
-            var extrectedArrayElement =
-                extractValue(ResolvedArrayElement, [attrToGet], variables);
-            gatheredResult[attrToGet] = extrectedArrayElement;
+      try {
+        parsingMetadata!.GatherFromArray
+            .forEach((dataObjectName, arrayParseInstructions) {
+          //print(arrayParseInstructions);
+          if (arrayParseInstructions['path']![0] != fileToParse) {
+            return;
           }
 
-          parsedResults[dataObjectName] = gatheredResult;
-          /*print(dataObjectName);
+          List<String> pathToInterestingArray =
+              arrayParseInstructions['path']!.sublist(1);
+          List<dynamic> interestingArray =
+              extractValue(data, pathToInterestingArray, variables);
+          List<String> attrsToGet = arrayParseInstructions['attrsToGet'] ?? [];
+          //print(interestingArray);
+          for (int i = 0; i < interestingArray.length; i++) {
+            Map<String, dynamic> gatheredResult = {};
+            Map<String, dynamic> ResolvedArrayElement = extractValue(
+                data, [...pathToInterestingArray, i.toString()], variables);
+            //print(ResolvedArrayElement);
+            for (var attrToGet in attrsToGet) {
+              var extrectedArrayElement =
+                  extractValue(ResolvedArrayElement, [attrToGet], variables);
+              gatheredResult[attrToGet] = extrectedArrayElement;
+            }
+            if (gatheredResult.isNotEmpty) {
+              if (parsedResults[dataObjectName] == null) {
+                parsedResults[dataObjectName] = [];
+              }
+              (parsedResults[dataObjectName] as List).add(gatheredResult);
+            }
+            /*print(dataObjectName);
           print(parsedResults[dataObjectName]);*/
-        }
-      });
+          }
+        });
+      } catch (e) {
+        //print(e.toString());
+      }
       //print(contents);
     }
 
+    /*print(updateDates);
+    print(updateDatesPrevious);*/
+
+    await pref.setString('updateDates', json.encode(updateDates));
+    await pref.setString(
+        'updateDatesPrevious', json.encode(updateDatesPrevious));
+    await pref.setString(
+        'biggestDate', DateFormat('yyyy-MM-dd kk:mm:ss').format(biggestDate!));
+
     //-----------Combo-------------
-    parsingMetadata!.ExtractFromFilesCombo
-        .forEach((ComboDataPointName, ComboDataElementsList) {
-      Map<String, dynamic> gatheredResult = {};
+    //print('Combo');
+    try {
+      parsingMetadata!.ExtractFromFilesCombo
+          .forEach((ComboDataPointName, ComboDataElementsList) {
+        Map<String, dynamic> gatheredResult = {};
 
-      ComboDataElementsList.sublist(1).forEach((DataToPutInCombo) {
-        if (DataToPutInCombo == 'TheFileTimestamp' &&
-            updateDates[ComboDataElementsList[0]] != null) {
-          gatheredResult[DataToPutInCombo] =
-              updateDates[ComboDataElementsList[0]]!.millisecondsSinceEpoch /
-                  1000;
-          return;
-        }
+        ComboDataElementsList.sublist(1).forEach((DataToPutInCombo) {
+          if (gatheredResult.isNotEmpty) {
+            if (DataToPutInCombo == 'TheFileTimestamp' &&
+                updateDates[ComboDataElementsList[0]] != null) {
+              gatheredResult[DataToPutInCombo] =
+                  DateTime.parse(updateDates[ComboDataElementsList[0]]!)
+                          .millisecondsSinceEpoch /
+                      1000;
+              return;
+            }
 
-        if (DataToPutInCombo == 'StartTimestamp' &&
-            updateDatesPrevious[ComboDataElementsList[0]] != null) {
-          gatheredResult[DataToPutInCombo] =
-              updateDatesPrevious[ComboDataElementsList[0]]!
-                      .millisecondsSinceEpoch /
-                  1000;
-          return;
-        }
+            if (DataToPutInCombo == 'StartTimestamp' &&
+                updateDatesPrevious[ComboDataElementsList[0]] != null) {
+              gatheredResult[DataToPutInCombo] =
+                  DateTime.parse(updateDatesPrevious[ComboDataElementsList[0]]!)
+                          .millisecondsSinceEpoch /
+                      1000;
+              return;
+            }
+          }
 
-        if (parsedResults[DataToPutInCombo] != null) {
-          gatheredResult[DataToPutInCombo] = parsedResults[DataToPutInCombo];
-        }
+          if (parsedResults[DataToPutInCombo] != null) {
+            gatheredResult[DataToPutInCombo] = parsedResults[DataToPutInCombo];
+          }
 
-        if (variables[DataToPutInCombo] != null) {
-          gatheredResult[DataToPutInCombo] = variables[DataToPutInCombo];
+          if (variables[DataToPutInCombo] != null) {
+            gatheredResult[DataToPutInCombo] = variables[DataToPutInCombo];
+          }
+        });
+
+        if (gatheredResult.isNotEmpty) {
+          parsedResults[ComboDataPointName] = gatheredResult;
         }
       });
-
-      parsedResults[ComboDataPointName] = gatheredResult;
-    });
-
+    } catch (e) {
+      //print(e.toString());
+    }
     //print(parsedResults);
 
     //-----------Preparing Server Dispatch-------------
     List<Map<String, dynamic>> eventsToSend = [];
 
     for (var importantData in parsingMetadata!.sendToServer) {
-      eventsToSend.add({
-        "time": "0",
-        "indicator": importantData,
-        "json": jsonEncode(parsedResults[importantData]),
-        "uid": marvelAccID
-      });
+      if (parsedResults[importantData] != null) {
+        eventsToSend.add({
+          "time": "0",
+          "indicator": importantData,
+          "json": jsonEncode(parsedResults[importantData]),
+          "uid": marvelAccID
+        });
+      }
     }
 
-    UploadToServer(eventsToSend);
+    if (eventsToSend.isNotEmpty) {
+      await UploadToServer(eventsToSend);
+    }
+
     /*print(eventsToSend);
     print(base64Json);
     print(updateDates);*/
@@ -233,7 +360,7 @@ class LogParser {
         variables.forEach((variable, replacement) {
           if (attribute.toString().contains(variable) &&
               attribute.toString() != variable) {
-            print('doing replacement!');
+            //print('doing replacement!');
             replacementDone = true;
             String attributeWithReplacement = attribute
                 .toString()

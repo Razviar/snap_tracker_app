@@ -1,20 +1,26 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_storage/saf.dart';
-import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:workmanager/workmanager.dart';
 
 import 'apiModels.dart';
+import 'notification_service.dart';
 import 'parser.dart';
 import 'status.dart';
-import 'trackerDrawer.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Workmanager().initialize(
+      callbackDispatcher // If enabled it will post a notification whenever the task is running. Handy for debugging tasks
+      );
+  await NotificationService().init();
   runApp(const MyApp());
 }
 
@@ -71,14 +77,14 @@ class MyHomePage extends StatefulWidget {
   final String title;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<MyHomePage> createState() => MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    _readJson(true);
+    _readPlayerDataFromJson(true);
   }
 
   String playerNick = "";
@@ -90,11 +96,23 @@ class _MyHomePageState extends State<MyHomePage> {
   String syncButtonText = "Sync Account!";
   String parsedTill = "";
   String requestCode = "";
+  bool isGameInstalled = false;
   bool isGameFolderLoaded = false;
   bool isLoggedIn = false;
+  bool isParserRunning = false;
   Timer? timer;
 
-  Future<void> _readJson(bool initialTest) async {
+  Future<void> updateParsedDate(DateTime? parsedTillUpdate) async {
+    //print('updateParsedDate');
+    if (parsedTillUpdate != null) {
+      //parsedTill = DateFormat('yyyy-MM-dd kk:mm:ss').format(parsedTillUpdate);
+      setState(() {
+        parsedTill = "test";
+      });
+    }
+  }
+
+  Future<void> _readPlayerDataFromJson(bool initialTest) async {
     //final String pathToOpen = file.path ?? 'default';
     Uri? selectedUriDir;
     final pref = await SharedPreferences.getInstance();
@@ -125,6 +143,15 @@ class _MyHomePageState extends State<MyHomePage> {
           initialUri: Uri.parse(
               "content://com.android.externalstorage.documents/tree/primary%3AAndroid%2Fdata%2Fcom.nvsgames.snap%2Ffiles%2FStandalone%2FStates%2Fnvprod"));
       await pref.setString('gameDataUri', selectedUriDir.toString());
+    } else if (initialTest) {
+      final exists =
+          await Directory("/storage/emulated/0/Android/obb/com.nvsgames.snap")
+              .exists();
+      if (exists) {
+        setState(() {
+          isGameInstalled = true;
+        });
+      }
     }
 
     if (selectedUriDir == null) {
@@ -159,13 +186,10 @@ class _MyHomePageState extends State<MyHomePage> {
         playerNick = snapNick ?? "";
         playerNickNoHash = snapNick.toString().split("#")[0];
         playerID = snapId ?? "";
-        parsedTill = existingFile.lastModified != null
-            ? DateFormat('yyyy-MM-dd kk:mm:ss')
-                .format(lastModifiedDate ?? DateTime.now())
-            : "";
+        parsedTill = "...";
         isGameFolderLoaded = true;
       });
-      startTheParser(selectedUriDir);
+      /*startTheParser(selectedUriDir);*/
     }
   }
 
@@ -174,7 +198,7 @@ class _MyHomePageState extends State<MyHomePage> {
       setState(() {
         syncButtonText = "Requesting...";
       });
-      print(requestCode);
+      //print(requestCode);
       final response = await http.post(
         Uri.parse('https://marvelsnap.pro/snap/do.php?cmd=mobilesync'),
         headers: <String, String>{
@@ -237,20 +261,62 @@ class _MyHomePageState extends State<MyHomePage> {
         await pref.setString('playerProNick', playerProNick);
         await pref.setString('playerProToken', playerProToken);
 
-        final scopeStoragePersistUrl = pref.getString('gameDataUri');
-        if (scopeStoragePersistUrl != null &&
-            await isPersistedUri(Uri.parse(scopeStoragePersistUrl)) &&
-            (await exists(Uri.parse(scopeStoragePersistUrl)) ?? false)) {
-          startTheParser(Uri.parse(scopeStoragePersistUrl));
-        }
+        Workmanager().registerOneOffTask(
+            "marvelsnap-parser-init", "marvelsnap-parser-init");
       }
     }
   }
 
-  void startTheParser(Uri selectedUriDir) {
+  /*void startTheParser(Uri selectedUriDir) {
     LogParser logParser =
         LogParser(selectedUriDir: selectedUriDir, marvelAccID: playerID);
     logParser.startParser();
+  }*/
+
+  Future<void> _startTheParserGlobally() async {
+    var platformChannelSpecifics =
+        await NotificationService().prepareNotifications();
+
+    await flutterLocalNotificationsPlugin.show(
+        12345,
+        "Snap Tracker is Running",
+        "This notification will remind you that parser is running. You should stop it when you're not snapping",
+        platformChannelSpecifics);
+
+    //print('starting parser globally!');
+    setState(() {
+      parsedTill = "Launching parser...";
+      isParserRunning = true;
+    });
+
+    Workmanager().registerOneOffTask("parser-loop-first", "parser-loop-first",
+        initialDelay: const Duration(seconds: 5));
+    Timer.periodic(const Duration(seconds: 10), (tmr) async {
+      //print('updateCheck!');
+      final pref = await SharedPreferences.getInstance();
+      pref.reload();
+      String? biggestDate = pref.getString('biggestDate');
+      //print(biggestDate);
+      if (biggestDate != parsedTill && biggestDate != null) {
+        setState(() {
+          parsedTill = biggestDate;
+          timer = tmr;
+        });
+        //print(biggestDate);
+      }
+    });
+  }
+
+  Future<void> _stopTheParserGlobally() async {
+    //print('stopping parser globally!');
+    await flutterLocalNotificationsPlugin.cancelAll();
+    Workmanager().cancelAll();
+    setState(() {
+      isParserRunning = false;
+    });
+    if (timer != null) {
+      timer?.cancel();
+    }
   }
 
   @override
@@ -267,10 +333,10 @@ class _MyHomePageState extends State<MyHomePage> {
         // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
       ),
-      drawer: TrackerDrawer(
+      /*drawer: TrackerDrawer(
         SnapID: playerNick,
         ProNick: playerProNick,
-      ),
+      ),*/
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -294,11 +360,46 @@ class _MyHomePageState extends State<MyHomePage> {
             if (!isGameFolderLoaded) LocateSNAP(),
             if (isGameFolderLoaded && !isLoggedIn) SyncAccount(),
             if (isGameFolderLoaded && isLoggedIn)
-              TrackerStatus(
-                SnapID: playerNick,
-                parsedTill: parsedTill,
-                ProNick: playerProNick,
-              ),
+              Column(children: [
+                TrackerStatus(
+                    SnapID: playerNick,
+                    parsedTill: parsedTill,
+                    ProNick: playerProNick,
+                    isParserRunning: isParserRunning),
+                MaterialButton(
+                  onPressed: () {
+                    //_pickFile();
+                    if (isParserRunning) {
+                      _stopTheParserGlobally();
+                    } else {
+                      _startTheParserGlobally();
+                    }
+                  },
+                  color: isParserRunning ? Colors.red : Colors.green,
+                  child: SizedBox(
+                    width: 200,
+                    child: Center(
+                        child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: isParserRunning
+                                ? const Icon(
+                                    Icons.stop,
+                                    color: Colors.white,
+                                  )
+                                : const Icon(Icons.play_arrow,
+                                    color: Colors.white),
+                          ),
+                          Text(
+                            isParserRunning ? 'Stop Parser' : 'Start Parsing',
+                            style: const TextStyle(color: Colors.white),
+                          )
+                        ])),
+                  ),
+                ),
+              ])
           ],
         ),
       ),
@@ -332,23 +433,85 @@ class _MyHomePageState extends State<MyHomePage> {
   Column LocateSNAP() {
     return Column(
       children: [
-        const Padding(
-          padding: EdgeInsets.all(20),
-          child: Text(
-              "First we need to get access to Marvel Snap Logs. To do it please locate Marvel Snap logs files and click Use This Folder button to let us track it."),
-        ),
-        MaterialButton(
-          onPressed: () {
-            //_pickFile();
-            _readJson(false);
-          },
-          color: Colors.green,
-          child: const Text(
-            'Locate Game Data',
-            style: TextStyle(color: Colors.white),
-          ),
-        ),
+        Padding(
+            padding: const EdgeInsets.all(20),
+            child: RichText(
+                text: const TextSpan(
+              style: TextStyle(
+                fontSize: 14.0,
+              ),
+              children: <TextSpan>[
+                TextSpan(
+                    text:
+                        "First we need to get access to Marvel Snap Logs. To do it please locate Marvel Snap logs logs folder "),
+                TextSpan(
+                    text: '"nvprod"',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                TextSpan(text: " and click "),
+                TextSpan(
+                    text: '<Use This Folder>',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                TextSpan(
+                    text:
+                        " button below the explorer to let us track it. When you click the button <Locate Game Data>, nvprod will be opened by default, so in the most cases all you need to do is click <Use This Folder> at the bottom of the screen."),
+              ],
+            ))),
+        isGameInstalled
+            ? MaterialButton(
+                onPressed: () {
+                  //_pickFile();
+                  _readPlayerDataFromJson(false);
+                },
+                color: Colors.green,
+                child: const Text(
+                  'Locate Game Data',
+                  style: TextStyle(color: Colors.white),
+                ),
+              )
+            : Padding(
+                padding: const EdgeInsets.all(20),
+                child: RichText(
+                    text: const TextSpan(
+                  children: <TextSpan>[
+                    TextSpan(
+                        text:
+                            "It looks like you don't have Marvel Snap installed.",
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    TextSpan(
+                        text:
+                            " This app is useful only if you have Marvel Snap installed on your phone. Please install the game and restart the tracker."),
+                  ],
+                )),
+              ),
       ],
     );
   }
+}
+
+@pragma(
+    'vm:entry-point') // Mandatory if the App is obfuscated or using Flutter 3.1+
+void callbackDispatcher() {
+  LogParser globalLogParser = LogParser();
+
+  Workmanager().executeTask((task, inputData) async {
+    //print(task);
+    switch (task) {
+      case "parser-loop-first":
+        //print("doing first loop!");
+        await globalLogParser.runParser(true);
+        Workmanager().registerOneOffTask("parser-loop", "parser-loop",
+            initialDelay: const Duration(seconds: 20),
+            existingWorkPolicy: ExistingWorkPolicy.replace);
+        break;
+      case "parser-loop":
+        //print("doing loop!");
+        await globalLogParser.runParser(false);
+
+        Workmanager().registerOneOffTask("parser-loop", "parser-loop",
+            initialDelay: const Duration(seconds: 20),
+            existingWorkPolicy: ExistingWorkPolicy.replace);
+        break;
+    }
+    return Future.value(true);
+  });
 }

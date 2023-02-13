@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "235164021074",
+    "project_id": "snaptracker-9211c",
+    "storage_bucket": "snaptracker-9211c.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:235164021074:android:a551e49176f532fd370a8b",
+        "android_client_info": {
+          "package_name": "com.mtgarenapro.snap_tracker_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "235164021074-kcudr3r3rq7ii2e4es1pvpv54gu8ujg5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBgmANaW1MDVSc1nMbLY6BqpFkNz1XADSs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "235164021074-kcudr3r3rq7ii2e4es1pvpv54gu8ujg5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
