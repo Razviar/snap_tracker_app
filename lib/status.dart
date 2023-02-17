@@ -43,7 +43,7 @@ class TrackerStatus extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.all(8.0),
           child: Text(
-            "Parser Status: ${isParserRunning ? "Running" : "Paused"}",
+            "Tracker Status: ${isParserRunning ? "Running" : "Paused"}",
             style: const TextStyle(
                 fontSize: 18, color: Color.fromARGB(255, 57, 152, 61)),
           ),

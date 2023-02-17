@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_storage/saf.dart';
 import 'parsing_metadata_model.dart';
 
@@ -19,7 +20,7 @@ class LogParser {
     final pref = await SharedPreferences.getInstance();
     final storedParsingMetadata = pref.getString('parsing_metadata');
     String textualParsingMetadata = '';
-    if (storedParsingMetadata == null) {
+    if (storedParsingMetadata == null || firstRun) {
       final response = await http.get(
           Uri.parse('https://marvelsnap.pro/snap/json/parsing_metadata.json'));
 
@@ -55,7 +56,7 @@ class LogParser {
   }
 
   Future<void> _ParserLoop(bool firstRun) async {
-    //print("strating loop!");
+    //print("doing inner loop!");
     /*print(selectedUriDir);
     print(marvelAccID);*/
     if (parsingMetadata == null ||
@@ -138,33 +139,37 @@ class LogParser {
           if (pathList[0] != fileToParse) {
             return;
           }
-          //print(VariableName);
-          List<dynamic> interestingThing =
-              (extractValue(data, pathList.sublist(1), null) as List)
-                  .map((item) => item as dynamic)
-                  .toList();
-          //print(interestingThing);
+          try {
+            //print(VariableName);
+            List<dynamic> interestingThing =
+                (extractValue(data, pathList.sublist(1), null) as List)
+                    .map((item) => item as dynamic)
+                    .toList();
+            //print(interestingThing);
 
-          switch (VariableName) {
-            case 'PLAYER_ID':
-              int i = 0;
-              for (var extractedElement in interestingThing) {
-                List<String> addedPath = [i.toString(), 'AccountId'];
-                //print([...pathList, ...addedPath]);
-                String? extractedAccountID = extractValue(
-                    data, [...pathList.sublist(1), ...addedPath], null);
+            switch (VariableName) {
+              case 'PLAYER_ID':
+                int i = 0;
+                for (var extractedElement in interestingThing) {
+                  List<String> addedPath = [i.toString(), 'AccountId'];
+                  //print([...pathList, ...addedPath]);
+                  String? extractedAccountID = extractValue(
+                      data, [...pathList.sublist(1), ...addedPath], null);
 
-                //print(extractedAccountID);
-                if (extractedAccountID != null &&
-                    extractedAccountID == marvelAccID) {
-                  variables[VariableName] = i;
-                  variables['OPPONENT_ID'] = i == 0 ? 1 : 0;
-                  variables['PLAYER_NUM'] = i == 0 ? 1 : 2;
-                  variables['OPPONENT_NUM'] = i == 0 ? 2 : 1;
+                  //print(extractedAccountID);
+                  if (extractedAccountID != null &&
+                      extractedAccountID == marvelAccID) {
+                    variables[VariableName] = i;
+                    variables['OPPONENT_ID'] = i == 0 ? 1 : 0;
+                    variables['PLAYER_NUM'] = i == 0 ? 1 : 2;
+                    variables['OPPONENT_NUM'] = i == 0 ? 2 : 1;
+                  }
+                  i++;
                 }
-                i++;
-              }
-              break;
+                break;
+            }
+          } catch (e) {
+            //print(e.toString());
           }
         });
       } catch (e) {
@@ -180,11 +185,15 @@ class LogParser {
           if (pathList[0] != fileToParse) {
             return;
           }
-          //print(dataObjectName);
-          var interestingThing =
-              extractValue(data, pathList.sublist(1), variables);
-          parsedResults[dataObjectName] = interestingThing;
-          //print(interestingThing);
+          try {
+            //print(dataObjectName);
+            var interestingThing =
+                extractValue(data, pathList.sublist(1), variables);
+            parsedResults[dataObjectName] = interestingThing;
+            //print(interestingThing);
+          } catch (e) {
+            //print(e.toString());
+          }
         });
       } catch (e) {
         //print(e.toString());
@@ -197,16 +206,20 @@ class LogParser {
           if (pathList[0] != fileToParse) {
             return;
           }
-          List<String> pathTointerestingThing = pathList.sublist(1);
-          List<dynamic>? interestingThing =
-              extractValue(data, pathList.sublist(1), variables);
+          try {
+            List<String> pathTointerestingThing = pathList.sublist(1);
+            List<dynamic>? interestingThing =
+                extractValue(data, pathList.sublist(1), variables);
 
-          if (interestingThing != null) {
-            for (int i = 0; i < interestingThing.length; i++) {
-              Map<String, dynamic> ResolvedArrayElement = extractValue(
-                  data, [...pathTointerestingThing, i.toString()], variables);
-              parsedResults[dataObjectName] = ResolvedArrayElement;
+            if (interestingThing != null) {
+              for (int i = 0; i < interestingThing.length; i++) {
+                Map<String, dynamic> ResolvedArrayElement = extractValue(
+                    data, [...pathTointerestingThing, i.toString()], variables);
+                parsedResults[dataObjectName] = ResolvedArrayElement;
+              }
             }
+          } catch (e) {
+            //print(e.toString());
           }
           //print(interestingThing);
         });
@@ -224,31 +237,35 @@ class LogParser {
           if (arrayParseInstructions['path']![0] != fileToParse) {
             return;
           }
-
-          List<String> pathToInterestingArray =
-              arrayParseInstructions['path']!.sublist(1);
-          List<dynamic> interestingArray =
-              extractValue(data, pathToInterestingArray, variables);
-          List<String> attrsToGet = arrayParseInstructions['attrsToGet'] ?? [];
-          //print(interestingArray);
-          for (int i = 0; i < interestingArray.length; i++) {
-            Map<String, dynamic> gatheredResult = {};
-            Map<String, dynamic> ResolvedArrayElement = extractValue(
-                data, [...pathToInterestingArray, i.toString()], variables);
-            //print(ResolvedArrayElement);
-            for (var attrToGet in attrsToGet) {
-              var extrectedArrayElement =
-                  extractValue(ResolvedArrayElement, [attrToGet], variables);
-              gatheredResult[attrToGet] = extrectedArrayElement;
-            }
-            if (gatheredResult.isNotEmpty) {
-              if (parsedResults[dataObjectName] == null) {
-                parsedResults[dataObjectName] = [];
+          try {
+            List<String> pathToInterestingArray =
+                arrayParseInstructions['path']!.sublist(1);
+            List<dynamic> interestingArray =
+                extractValue(data, pathToInterestingArray, variables);
+            List<String> attrsToGet =
+                arrayParseInstructions['attrsToGet'] ?? [];
+            //print(interestingArray);
+            for (int i = 0; i < interestingArray.length; i++) {
+              Map<String, dynamic> gatheredResult = {};
+              Map<String, dynamic> ResolvedArrayElement = extractValue(
+                  data, [...pathToInterestingArray, i.toString()], variables);
+              //print(ResolvedArrayElement);
+              for (var attrToGet in attrsToGet) {
+                var extrectedArrayElement =
+                    extractValue(ResolvedArrayElement, [attrToGet], variables);
+                gatheredResult[attrToGet] = extrectedArrayElement;
               }
-              (parsedResults[dataObjectName] as List).add(gatheredResult);
-            }
-            /*print(dataObjectName);
+              if (gatheredResult.isNotEmpty) {
+                if (parsedResults[dataObjectName] == null) {
+                  parsedResults[dataObjectName] = [];
+                }
+                (parsedResults[dataObjectName] as List).add(gatheredResult);
+              }
+              /*print(dataObjectName);
           print(parsedResults[dataObjectName]);*/
+            }
+          } catch (e) {
+            //print(e.toString());
           }
         });
       } catch (e) {
@@ -272,37 +289,40 @@ class LogParser {
       parsingMetadata!.ExtractFromFilesCombo
           .forEach((ComboDataPointName, ComboDataElementsList) {
         Map<String, dynamic> gatheredResult = {};
+        try {
+          ComboDataElementsList.sublist(1).forEach((DataToPutInCombo) {
+            if (gatheredResult.isNotEmpty) {
+              if (DataToPutInCombo == 'TheFileTimestamp' &&
+                  updateDates[ComboDataElementsList[0]] != null) {
+                gatheredResult[DataToPutInCombo] =
+                    DateTime.parse(updateDates[ComboDataElementsList[0]]!)
+                            .millisecondsSinceEpoch /
+                        1000;
+                return;
+              }
 
-        ComboDataElementsList.sublist(1).forEach((DataToPutInCombo) {
-          if (gatheredResult.isNotEmpty) {
-            if (DataToPutInCombo == 'TheFileTimestamp' &&
-                updateDates[ComboDataElementsList[0]] != null) {
-              gatheredResult[DataToPutInCombo] =
-                  DateTime.parse(updateDates[ComboDataElementsList[0]]!)
-                          .millisecondsSinceEpoch /
-                      1000;
-              return;
+              if (DataToPutInCombo == 'StartTimestamp' &&
+                  updateDatesPrevious[ComboDataElementsList[0]] != null) {
+                gatheredResult[DataToPutInCombo] = DateTime.parse(
+                            updateDatesPrevious[ComboDataElementsList[0]]!)
+                        .millisecondsSinceEpoch /
+                    1000;
+                return;
+              }
             }
 
-            if (DataToPutInCombo == 'StartTimestamp' &&
-                updateDatesPrevious[ComboDataElementsList[0]] != null) {
+            if (parsedResults[DataToPutInCombo] != null) {
               gatheredResult[DataToPutInCombo] =
-                  DateTime.parse(updateDatesPrevious[ComboDataElementsList[0]]!)
-                          .millisecondsSinceEpoch /
-                      1000;
-              return;
+                  parsedResults[DataToPutInCombo];
             }
-          }
 
-          if (parsedResults[DataToPutInCombo] != null) {
-            gatheredResult[DataToPutInCombo] = parsedResults[DataToPutInCombo];
-          }
-
-          if (variables[DataToPutInCombo] != null) {
-            gatheredResult[DataToPutInCombo] = variables[DataToPutInCombo];
-          }
-        });
-
+            if (variables[DataToPutInCombo] != null) {
+              gatheredResult[DataToPutInCombo] = variables[DataToPutInCombo];
+            }
+          });
+        } catch (e) {
+          //print(e.toString());
+        }
         if (gatheredResult.isNotEmpty) {
           parsedResults[ComboDataPointName] = gatheredResult;
         }
@@ -316,13 +336,17 @@ class LogParser {
     List<Map<String, dynamic>> eventsToSend = [];
 
     for (var importantData in parsingMetadata!.sendToServer) {
-      if (parsedResults[importantData] != null) {
-        eventsToSend.add({
-          "time": "0",
-          "indicator": importantData,
-          "json": jsonEncode(parsedResults[importantData]),
-          "uid": marvelAccID
-        });
+      try {
+        if (parsedResults[importantData] != null) {
+          eventsToSend.add({
+            "time": "0",
+            "indicator": importantData,
+            "json": jsonEncode(parsedResults[importantData]),
+            "uid": marvelAccID
+          });
+        }
+      } catch (e) {
+        //print(e.toString());
       }
     }
 
@@ -330,15 +354,20 @@ class LogParser {
       await UploadToServer(eventsToSend);
     }
 
-    /*print(eventsToSend);
-    print(base64Json);
+    await Future.delayed(const Duration(seconds: 2));
+    await _ParserLoop(false);
+    /*print("sending events:");
+    print(eventsToSend.length);*/
+    /*print(base64Json);
     print(updateDates);*/
   }
 
   Future<void> UploadToServer(List<Map<String, dynamic>> eventsToSend) async {
+    PackageInfo packageInfo = await PackageInfo.fromPlatform();
+    String version = packageInfo.version;
     final response = await http.post(
       Uri.parse(
-          'https://marvelsnap.pro/snap/donew2.php?cmd=cm_uploadpackfile&version=3.0.1m'),
+          'https://marvelsnap.pro/snap/donew2.php?cmd=cm_uploadpackfile&version=${version}m'),
       headers: <String, String>{
         'Content-Type': 'application/json; charset=UTF-8',
       },

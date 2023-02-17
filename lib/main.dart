@@ -1,25 +1,25 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
+import 'package:appcheck/appcheck.dart';
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_storage/saf.dart';
 import 'package:http/http.dart' as http;
+import 'package:snap_tracker_app/apiModels.dart';
+import 'package:snap_tracker_app/notification_service.dart';
+import 'package:snap_tracker_app/parser.dart';
+import 'package:snap_tracker_app/status.dart';
+import 'package:snap_tracker_app/trackerDrawer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:workmanager/workmanager.dart';
 
-import 'apiModels.dart';
-import 'notification_service.dart';
-import 'parser.dart';
-import 'status.dart';
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Workmanager().initialize(
-      callbackDispatcher // If enabled it will post a notification whenever the task is running. Handy for debugging tasks
-      );
+  await Workmanager().initialize(callbackDispatcher /*, isInDebugMode: true*/);
   await NotificationService().init();
   runApp(const MyApp());
 }
@@ -87,6 +87,7 @@ class MyHomePageState extends State<MyHomePage> {
     _readPlayerDataFromJson(true);
   }
 
+  String AppVersion = "";
   String playerNick = "";
   String playerNickNoHash = "";
   String playerID = "";
@@ -101,19 +102,18 @@ class MyHomePageState extends State<MyHomePage> {
   bool isLoggedIn = false;
   bool isParserRunning = false;
   Timer? timer;
+  DateTime currentBackPressTime = DateTime.now();
 
-  Future<void> updateParsedDate(DateTime? parsedTillUpdate) async {
-    //print('updateParsedDate');
-    if (parsedTillUpdate != null) {
-      //parsedTill = DateFormat('yyyy-MM-dd kk:mm:ss').format(parsedTillUpdate);
-      setState(() {
-        parsedTill = "test";
-      });
-    }
+  Future<String> _getVersion() async {
+    PackageInfo packageInfo = await PackageInfo.fromPlatform();
+    return packageInfo.version;
   }
 
   Future<void> _readPlayerDataFromJson(bool initialTest) async {
-    //final String pathToOpen = file.path ?? 'default';
+    final String ver = await _getVersion();
+    setState(() {
+      AppVersion = ver;
+    });
     Uri? selectedUriDir;
     final pref = await SharedPreferences.getInstance();
     final scopeStoragePersistUrl = pref.getString('gameDataUri');
@@ -144,12 +144,17 @@ class MyHomePageState extends State<MyHomePage> {
               "content://com.android.externalstorage.documents/tree/primary%3AAndroid%2Fdata%2Fcom.nvsgames.snap%2Ffiles%2FStandalone%2FStates%2Fnvprod"));
       await pref.setString('gameDataUri', selectedUriDir.toString());
     } else if (initialTest) {
-      final exists =
-          await Directory("/storage/emulated/0/Android/obb/com.nvsgames.snap")
-              .exists();
-      if (exists) {
+      try {
+        final exists = await AppCheck.isAppEnabled("com.nvsgames.snap");
+
+        if (exists) {
+          setState(() {
+            isGameInstalled = true;
+          });
+        }
+      } catch (ex) {
         setState(() {
-          isGameInstalled = true;
+          isGameInstalled = false;
         });
       }
     }
@@ -260,9 +265,6 @@ class MyHomePageState extends State<MyHomePage> {
         await pref.setString('playerUID', playerUID);
         await pref.setString('playerProNick', playerProNick);
         await pref.setString('playerProToken', playerProToken);
-
-        Workmanager().registerOneOffTask(
-            "marvelsnap-parser-init", "marvelsnap-parser-init");
       }
     }
   }
@@ -280,17 +282,18 @@ class MyHomePageState extends State<MyHomePage> {
     await flutterLocalNotificationsPlugin.show(
         12345,
         "Snap Tracker is Running",
-        "This notification will remind you that parser is running. You should stop it when you're not snapping",
+        "This will remind you that tracker is running. You should stop it when you're not snapping",
         platformChannelSpecifics);
 
     //print('starting parser globally!');
     setState(() {
-      parsedTill = "Launching parser...";
+      parsedTill = "Launching tracker...";
       isParserRunning = true;
     });
 
     Workmanager().registerOneOffTask("parser-loop-first", "parser-loop-first",
-        initialDelay: const Duration(seconds: 5));
+        initialDelay: const Duration(seconds: 3));
+
     Timer.periodic(const Duration(seconds: 10), (tmr) async {
       //print('updateCheck!');
       final pref = await SharedPreferences.getInstance();
@@ -333,77 +336,96 @@ class MyHomePageState extends State<MyHomePage> {
         // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
       ),
-      /*drawer: TrackerDrawer(
-        SnapID: playerNick,
-        ProNick: playerProNick,
-      ),*/
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(30),
-                  child: Text(
-                    playerNickNoHash != ''
-                        ? "Hello, $playerNickNoHash!"
-                        : playerProNick != ''
-                            ? "Hello, $playerProNick!"
-                            : "Hello, Fellow Snapper!",
-                    textAlign: TextAlign.center,
-                    textScaleFactor: 2,
-                  ),
-                )
-              ],
-            ),
-            if (!isGameFolderLoaded) LocateSNAP(),
-            if (isGameFolderLoaded && !isLoggedIn) SyncAccount(),
-            if (isGameFolderLoaded && isLoggedIn)
-              Column(children: [
-                TrackerStatus(
-                    SnapID: playerNick,
-                    parsedTill: parsedTill,
-                    ProNick: playerProNick,
-                    isParserRunning: isParserRunning),
-                MaterialButton(
-                  onPressed: () {
-                    //_pickFile();
-                    if (isParserRunning) {
-                      _stopTheParserGlobally();
-                    } else {
-                      _startTheParserGlobally();
-                    }
-                  },
-                  color: isParserRunning ? Colors.red : Colors.green,
-                  child: SizedBox(
-                    width: 200,
-                    child: Center(
-                        child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: isParserRunning
-                                ? const Icon(
-                                    Icons.stop,
-                                    color: Colors.white,
-                                  )
-                                : const Icon(Icons.play_arrow,
-                                    color: Colors.white),
-                          ),
-                          Text(
-                            isParserRunning ? 'Stop Parser' : 'Start Parsing',
-                            style: const TextStyle(color: Colors.white),
-                          )
-                        ])),
-                  ),
+      drawer: isGameFolderLoaded && isLoggedIn
+          ? TrackerDrawer(
+              SnapID: playerNick,
+              ProNick: playerProNick,
+              version: AppVersion,
+            )
+          : null,
+      body: WillPopScope(onWillPop: onWillPop, child: bodyGenerator()),
+    );
+  }
+
+  Center bodyGenerator() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(30),
+                child: Text(
+                  playerNickNoHash != ''
+                      ? "Hello, $playerNickNoHash!"
+                      : playerProNick != ''
+                          ? "Hello, $playerProNick!"
+                          : "Hello, Fellow Snapper!",
+                  textAlign: TextAlign.center,
+                  textScaleFactor: 2,
                 ),
-              ])
-          ],
-        ),
+              )
+            ],
+          ),
+          if (!isGameFolderLoaded) LocateSNAP(),
+          if (isGameFolderLoaded && !isLoggedIn) SyncAccount(),
+          if (isGameFolderLoaded && isLoggedIn)
+            Column(children: [
+              TrackerStatus(
+                  SnapID: playerNick,
+                  parsedTill: parsedTill,
+                  ProNick: playerProNick,
+                  isParserRunning: isParserRunning),
+              MaterialButton(
+                onPressed: () {
+                  //_pickFile();
+                  if (isParserRunning) {
+                    _stopTheParserGlobally();
+                  } else {
+                    _startTheParserGlobally();
+                  }
+                },
+                color: isParserRunning
+                    ? Colors.red
+                    : const Color.fromARGB(255, 163, 93, 202),
+                child: SizedBox(
+                  width: 200,
+                  child: Center(
+                      child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: isParserRunning
+                              ? const Icon(
+                                  Icons.stop,
+                                  color: Colors.white,
+                                )
+                              : const Icon(Icons.play_arrow,
+                                  color: Colors.white),
+                        ),
+                        Text(
+                          isParserRunning ? 'Stop Tracker' : 'Start Tracker',
+                          style: const TextStyle(color: Colors.white),
+                        )
+                      ])),
+                ),
+              ),
+            ])
+        ],
       ),
     );
+  }
+
+  Future<bool> onWillPop() {
+    DateTime now = DateTime.now();
+    if (now.difference(currentBackPressTime) > const Duration(seconds: 2)) {
+      currentBackPressTime = now;
+      Fluttertoast.showToast(msg: "Swipe Back again to exit");
+      return Future.value(false);
+    }
+    return Future.value(true);
   }
 
   Column SyncAccount() {
@@ -420,7 +442,7 @@ class MyHomePageState extends State<MyHomePage> {
           onPressed: () {
             _startSync();
           },
-          color: Colors.green,
+          color: const Color.fromARGB(255, 163, 93, 202),
           child: Text(
             syncButtonText,
             style: const TextStyle(color: Colors.white),
@@ -433,6 +455,13 @@ class MyHomePageState extends State<MyHomePage> {
   Column LocateSNAP() {
     return Column(
       children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Image(width: 130, image: AssetImage('images/Screenshot_1.jpg')),
+            Image(width: 130, image: AssetImage('images/Screenshot_2.jpg')),
+          ],
+        ),
         Padding(
             padding: const EdgeInsets.all(20),
             child: RichText(
@@ -443,9 +472,9 @@ class MyHomePageState extends State<MyHomePage> {
               children: <TextSpan>[
                 TextSpan(
                     text:
-                        "First we need to get access to Marvel Snap Logs. To do it please locate Marvel Snap logs logs folder "),
+                        "First we need to get access to Marvel Snap Logs. To do it please click <Locate Game Data> button, make sure you see "),
                 TextSpan(
-                    text: '"nvprod"',
+                    text: '"nvprod" folder',
                     style: TextStyle(fontWeight: FontWeight.bold)),
                 TextSpan(text: " and click "),
                 TextSpan(
@@ -462,7 +491,7 @@ class MyHomePageState extends State<MyHomePage> {
                   //_pickFile();
                   _readPlayerDataFromJson(false);
                 },
-                color: Colors.green,
+                color: const Color.fromARGB(255, 163, 93, 202),
                 child: const Text(
                   'Locate Game Data',
                   style: TextStyle(color: Colors.white),
@@ -475,11 +504,11 @@ class MyHomePageState extends State<MyHomePage> {
                   children: <TextSpan>[
                     TextSpan(
                         text:
-                            "It looks like you don't have Marvel Snap installed.",
+                            "It looks like you don't have Marvel Snap installed or never run it on this device.",
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     TextSpan(
                         text:
-                            " This app is useful only if you have Marvel Snap installed on your phone. Please install the game and restart the tracker."),
+                            " This app is useful only if you have Marvel Snap installed on your phone. Please install the game, run it at least once and restart the tracker."),
                   ],
                 )),
               ),
@@ -491,24 +520,31 @@ class MyHomePageState extends State<MyHomePage> {
 @pragma(
     'vm:entry-point') // Mandatory if the App is obfuscated or using Flutter 3.1+
 void callbackDispatcher() {
-  LogParser globalLogParser = LogParser();
-
   Workmanager().executeTask((task, inputData) async {
     //print(task);
     switch (task) {
       case "parser-loop-first":
         //print("doing first loop!");
-        await globalLogParser.runParser(true);
+        try {
+          LogParser globalLogParser = LogParser();
+          await globalLogParser.runParser(true);
+        } catch (ex) {
+          print(ex.toString());
+        }
         Workmanager().registerOneOffTask("parser-loop", "parser-loop",
-            initialDelay: const Duration(seconds: 20),
+            initialDelay: const Duration(seconds: 10),
             existingWorkPolicy: ExistingWorkPolicy.replace);
         break;
       case "parser-loop":
-        //print("doing loop!");
-        await globalLogParser.runParser(false);
-
+        //print("callbackDispatcher - doing loop!");
+        try {
+          LogParser globalLogParser = LogParser();
+          await globalLogParser.runParser(false);
+        } catch (ex) {
+          print(ex.toString());
+        }
         Workmanager().registerOneOffTask("parser-loop", "parser-loop",
-            initialDelay: const Duration(seconds: 20),
+            initialDelay: const Duration(seconds: 10),
             existingWorkPolicy: ExistingWorkPolicy.replace);
         break;
     }
