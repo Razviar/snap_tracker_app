@@ -15,7 +15,7 @@ class LogParser {
   Uri? selectedUriDir;
   String? marvelAccID;
 
-  Future<void> runParser(bool firstRun) async {
+  Future<DateTime?> runParser(bool firstRun) async {
     //print("starting parser!!!");
     final pref = await SharedPreferences.getInstance();
     final storedParsingMetadata = pref.getString('parsing_metadata');
@@ -25,7 +25,7 @@ class LogParser {
           Uri.parse('https://marvelsnap.pro/snap/json/parsing_metadata.json'));
 
       if (response.statusCode != 200) {
-        return;
+        return null;
       }
       await pref.setString('parsing_metadata', response.body);
       textualParsingMetadata = response.body;
@@ -36,33 +36,34 @@ class LogParser {
 
     final scopeStoragePersistUrl = pref.getString('gameDataUri');
     if (scopeStoragePersistUrl == null) {
-      return;
+      return null;
     }
     final uriDir = Uri.parse(scopeStoragePersistUrl);
     final playerID = pref.getString('snapId');
     if (playerID == null) {
-      return;
+      return null;
     }
 
     selectedUriDir = uriDir;
     marvelAccID = playerID;
     parsingMetadata =
         ParsingMetadata.fromJson(jsonDecode(textualParsingMetadata));
-    await _ParserLoop(firstRun);
+    final parsedTill = await _parserLoop(firstRun);
+    return parsedTill;
   }
 
   void setUri(Uri uriToSet) {
     selectedUriDir = uriToSet;
   }
 
-  Future<void> _ParserLoop(bool firstRun) async {
+  Future<DateTime?> _parserLoop(bool firstRun) async {
     //print("doing inner loop!");
     /*print(selectedUriDir);
     print(marvelAccID);*/
     if (parsingMetadata == null ||
         selectedUriDir == null ||
         marvelAccID == null) {
-      return;
+      return null;
     }
     final pref = await SharedPreferences.getInstance();
     Map<String, dynamic> parsedResults = {};
@@ -354,12 +355,7 @@ class LogParser {
       await UploadToServer(eventsToSend);
     }
 
-    await Future.delayed(const Duration(seconds: 2));
-    await _ParserLoop(false);
-    /*print("sending events:");
-    print(eventsToSend.length);*/
-    /*print(base64Json);
-    print(updateDates);*/
+    return biggestDate;
   }
 
   Future<void> UploadToServer(List<Map<String, dynamic>> eventsToSend) async {
@@ -425,19 +421,9 @@ class LogParser {
         }
       }
 
-      /*if (value[_isNumeric(attribute) ? int.tryParse(attribute) : attribute] !=
-          null) {
-        value =
-            value[_isNumeric(attribute) ? int.tryParse(attribute) : attribute];
-      } else {
-        value = null;
-        break;
-      }*/
-
       if (value is Map && value['\$ref'] != null) {
         value = getObject(data, '\$id', value['\$ref']);
       }
-      //print(value);
     }
 
     return value;

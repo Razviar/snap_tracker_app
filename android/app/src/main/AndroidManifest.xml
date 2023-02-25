@@ -46,5 +46,6 @@
         <meta-data
           android:name="com.google.firebase.messaging.default_notification_icon"
           android:resource="@drawable/ic_stat_logo_crop" />
+        <service android:name="com.pravera.flutter_foreground_task.service.ForegroundService" />
     </application>
 </manifest>

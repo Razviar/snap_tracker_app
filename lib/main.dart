@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math';
 
 import 'package:appcheck/appcheck.dart';
+import 'package:disable_battery_optimization/disable_battery_optimization.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,15 +14,13 @@ import 'package:shared_storage/saf.dart';
 import 'package:http/http.dart' as http;
 import 'package:snap_tracker_app/apiModels.dart';
 import 'package:snap_tracker_app/notification_service.dart';
-import 'package:snap_tracker_app/parser.dart';
 import 'package:snap_tracker_app/status.dart';
 import 'package:snap_tracker_app/trackerDrawer.dart';
+import 'package:snap_tracker_app/trackinghandler.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:workmanager/workmanager.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Workmanager().initialize(callbackDispatcher /*, isInDebugMode: true*/);
   await NotificationService().init();
   runApp(const MyApp());
 }
@@ -37,7 +38,8 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return WithForegroundTask(
+        child: MaterialApp(
       title: 'Marvel Snap Tracker',
       theme: ThemeData(
           // This is the theme of your application.
@@ -58,7 +60,7 @@ class MyApp extends StatelessWidget {
               bodyMedium:
                   TextStyle(color: Color.fromARGB(255, 176, 186, 197)))),
       home: const MyHomePage(title: 'Marvel Snap Tracker'),
-    );
+    ));
   }
 }
 
@@ -84,9 +86,11 @@ class MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    _initForegroundTask();
     _readPlayerDataFromJson(true);
   }
 
+  ReceivePort? _receivePort;
   String AppVersion = "";
   String playerNick = "";
   String playerNickNoHash = "";
@@ -101,8 +105,57 @@ class MyHomePageState extends State<MyHomePage> {
   bool isGameFolderLoaded = false;
   bool isLoggedIn = false;
   bool isParserRunning = false;
+  bool isBatteryOptimizationDisabled = false;
   Timer? timer;
   DateTime currentBackPressTime = DateTime.now();
+
+  void _initForegroundTask() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+          channelId: 'snap-tracker-notification',
+          channelName: 'Snap Tracker',
+          channelDescription: 'Notifications from Snap Tracker',
+          channelImportance: NotificationChannelImportance.LOW,
+          priority: NotificationPriority.LOW,
+          playSound: false,
+          isSticky: true,
+          iconData: const NotificationIconData(
+              resType: ResourceType.drawable,
+              resPrefix: ResourcePrefix.ic,
+              name: "stat_logo_crop")),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: const ForegroundTaskOptions(
+        interval: 3000,
+        isOnceEvent: false,
+        autoRunOnBoot: false,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
+  }
+
+  bool _registerReceivePort(ReceivePort? newReceivePort) {
+    if (newReceivePort == null) {
+      return false;
+    }
+
+    _closeReceivePort();
+
+    _receivePort = newReceivePort;
+    _receivePort?.listen((message) {
+      _timeUpdateWork();
+    });
+
+    return _receivePort != null;
+  }
+
+  void _closeReceivePort() {
+    _receivePort?.close();
+    _receivePort = null;
+  }
 
   Future<String> _getVersion() async {
     PackageInfo packageInfo = await PackageInfo.fromPlatform();
@@ -114,6 +167,16 @@ class MyHomePageState extends State<MyHomePage> {
     setState(() {
       AppVersion = ver;
     });
+
+    bool? isBatteryOptimizationDisabled =
+        await DisableBatteryOptimization.isBatteryOptimizationDisabled;
+
+    if (isBatteryOptimizationDisabled == true) {
+      setState(() {
+        isBatteryOptimizationDisabled = true;
+      });
+    }
+
     Uri? selectedUriDir;
     final pref = await SharedPreferences.getInstance();
     final scopeStoragePersistUrl = pref.getString('gameDataUri');
@@ -195,31 +258,14 @@ class MyHomePageState extends State<MyHomePage> {
         isGameFolderLoaded = true;
       });
 
-      final isAlreadyParsing = await checkIfWorkExists();
+      final isAlreadyParsing = await FlutterForegroundTask.isRunningService;
       if (isAlreadyParsing) {
         setState(() {
           isParserRunning = true;
         });
-        if (timer != null) {
-          timer?.cancel();
-        }
-        Timer.periodic(const Duration(seconds: 10), _timerWork);
       }
+      _timeUpdateWork();
     }
-  }
-
-  Future<bool> checkIfWorkExists() async {
-    final notifications =
-        await flutterLocalNotificationsPlugin.getActiveNotifications();
-    if (notifications.isNotEmpty) {
-      for (var element in notifications) {
-        if (element.id == 12345) {
-          return true;
-        }
-      }
-      return false;
-    }
-    return false;
   }
 
   Future<void> _startSync() async {
@@ -289,33 +335,51 @@ class MyHomePageState extends State<MyHomePage> {
         await pref.setString('playerUID', playerUID);
         await pref.setString('playerProNick', playerProNick);
         await pref.setString('playerProToken', playerProToken);
+        if (timer != null) {
+          timer?.cancel();
+          setState(() {
+            timer = null;
+          });
+        }
       }
     }
   }
 
   Future<void> _startTheParserGlobally() async {
-    var platformChannelSpecifics =
-        await NotificationService().prepareNotifications();
-
-    await flutterLocalNotificationsPlugin.show(
-        12345,
-        "Snap Tracker is Running",
-        "This will remind you that tracker is running. You should stop it when you're not snapping",
-        platformChannelSpecifics);
-
+    await NotificationService().prepareNotifications();
     //print('starting parser globally!');
     setState(() {
       parsedTill = "Launching tracker...";
       isParserRunning = true;
     });
 
-    Workmanager().registerOneOffTask("parser-loop-first", "parser-loop-first",
-        initialDelay: const Duration(seconds: 3));
+    final ReceivePort? receivePort = FlutterForegroundTask.receivePort;
+    final bool isRegistered = _registerReceivePort(receivePort);
+    if (!isRegistered) {
+      //print('Failed to register receivePort!');
+      return;
+    }
 
-    Timer.periodic(const Duration(seconds: 10), _timerWork);
+    //print(isRegistered);
+
+    if (await FlutterForegroundTask.isRunningService) {
+      //print('is running');
+      return;
+    } else {
+      //print('starting service!');
+      final test = await FlutterForegroundTask.startService(
+        notificationTitle: 'Marvel Snap Tracker',
+        notificationText: 'Tracker is running.',
+        callback: startCallback,
+      );
+      //print(test);
+      return;
+    }
+
+    //Timer.periodic(const Duration(seconds: 10), _timerWork);
   }
 
-  Future<void> _timerWork(Timer tmr) async {
+  Future<void> _timeUpdateWork() async {
     //print('updateCheck!');
     final pref = await SharedPreferences.getInstance();
     pref.reload();
@@ -324,7 +388,6 @@ class MyHomePageState extends State<MyHomePage> {
     if (biggestDate != parsedTill && biggestDate != null) {
       setState(() {
         parsedTill = biggestDate;
-        timer = tmr;
       });
       //print(biggestDate);
     }
@@ -332,14 +395,10 @@ class MyHomePageState extends State<MyHomePage> {
 
   Future<void> _stopTheParserGlobally() async {
     //print('stopping parser globally!');
-    await flutterLocalNotificationsPlugin.cancelAll();
-    Workmanager().cancelAll();
+    await FlutterForegroundTask.stopService();
     setState(() {
       isParserRunning = false;
     });
-    if (timer != null) {
-      timer?.cancel();
-    }
   }
 
   @override
@@ -432,6 +491,32 @@ class MyHomePageState extends State<MyHomePage> {
                       ])),
                 ),
               ),
+              Padding(
+                padding: const EdgeInsets.only(top: 80),
+                child: Column(
+                  children: isBatteryOptimizationDisabled
+                      ? []
+                      : [
+                          const Text('Troubleshooting'),
+                          MaterialButton(
+                              color: Colors.blueGrey,
+                              onPressed: () {
+                                DisableBatteryOptimization
+                                    .showDisableBatteryOptimizationSettings();
+                                setState(() {
+                                  isBatteryOptimizationDisabled = true;
+                                });
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.all(8.0),
+                                child: Text(
+                                  "Disable Battery Saving",
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                              ))
+                        ],
+                ),
+              )
             ])
         ],
       ),
@@ -537,37 +622,8 @@ class MyHomePageState extends State<MyHomePage> {
   }
 }
 
-@pragma(
-    'vm:entry-point') // Mandatory if the App is obfuscated or using Flutter 3.1+
-void callbackDispatcher() {
-  Workmanager().executeTask((task, inputData) async {
-    //print(task);
-    switch (task) {
-      case "parser-loop-first":
-        //print("doing first loop!");
-        try {
-          LogParser globalLogParser = LogParser();
-          await globalLogParser.runParser(true);
-        } catch (ex) {
-          print(ex.toString());
-        }
-        Workmanager().registerOneOffTask("parser-loop", "parser-loop",
-            initialDelay: const Duration(seconds: 10),
-            existingWorkPolicy: ExistingWorkPolicy.replace);
-        break;
-      case "parser-loop":
-        //print("callbackDispatcher - doing loop!");
-        try {
-          LogParser globalLogParser = LogParser();
-          await globalLogParser.runParser(false);
-        } catch (ex) {
-          print(ex.toString());
-        }
-        Workmanager().registerOneOffTask("parser-loop", "parser-loop",
-            initialDelay: const Duration(seconds: 10),
-            existingWorkPolicy: ExistingWorkPolicy.replace);
-        break;
-    }
-    return Future.value(true);
-  });
+@pragma('vm:entry-point')
+void startCallback() {
+  // The setTaskHandler function must be called to handle the task in the background.
+  FlutterForegroundTask.setTaskHandler(MyTaskHandler());
 }
