@@ -194,8 +194,32 @@ class MyHomePageState extends State<MyHomePage> {
         parsedTill = "...";
         isGameFolderLoaded = true;
       });
-      /*startTheParser(selectedUriDir);*/
+
+      final isAlreadyParsing = await checkIfWorkExists();
+      if (isAlreadyParsing) {
+        setState(() {
+          isParserRunning = true;
+        });
+        if (timer != null) {
+          timer?.cancel();
+        }
+        Timer.periodic(const Duration(seconds: 10), _timerWork);
+      }
     }
+  }
+
+  Future<bool> checkIfWorkExists() async {
+    final notifications =
+        await flutterLocalNotificationsPlugin.getActiveNotifications();
+    if (notifications.isNotEmpty) {
+      for (var element in notifications) {
+        if (element.id == 12345) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return false;
   }
 
   Future<void> _startSync() async {
@@ -269,12 +293,6 @@ class MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  /*void startTheParser(Uri selectedUriDir) {
-    LogParser logParser =
-        LogParser(selectedUriDir: selectedUriDir, marvelAccID: playerID);
-    logParser.startParser();
-  }*/
-
   Future<void> _startTheParserGlobally() async {
     var platformChannelSpecifics =
         await NotificationService().prepareNotifications();
@@ -294,20 +312,22 @@ class MyHomePageState extends State<MyHomePage> {
     Workmanager().registerOneOffTask("parser-loop-first", "parser-loop-first",
         initialDelay: const Duration(seconds: 3));
 
-    Timer.periodic(const Duration(seconds: 10), (tmr) async {
-      //print('updateCheck!');
-      final pref = await SharedPreferences.getInstance();
-      pref.reload();
-      String? biggestDate = pref.getString('biggestDate');
+    Timer.periodic(const Duration(seconds: 10), _timerWork);
+  }
+
+  Future<void> _timerWork(Timer tmr) async {
+    //print('updateCheck!');
+    final pref = await SharedPreferences.getInstance();
+    pref.reload();
+    String? biggestDate = pref.getString('biggestDate');
+    //print(biggestDate);
+    if (biggestDate != parsedTill && biggestDate != null) {
+      setState(() {
+        parsedTill = biggestDate;
+        timer = tmr;
+      });
       //print(biggestDate);
-      if (biggestDate != parsedTill && biggestDate != null) {
-        setState(() {
-          parsedTill = biggestDate;
-          timer = tmr;
-        });
-        //print(biggestDate);
-      }
-    });
+    }
   }
 
   Future<void> _stopTheParserGlobally() async {
