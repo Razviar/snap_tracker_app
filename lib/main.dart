@@ -128,7 +128,7 @@ class MyHomePageState extends State<MyHomePage> {
         playSound: false,
       ),
       foregroundTaskOptions: const ForegroundTaskOptions(
-        interval: 3000,
+        interval: 4000,
         isOnceEvent: false,
         autoRunOnBoot: false,
         allowWakeLock: true,
@@ -146,7 +146,13 @@ class MyHomePageState extends State<MyHomePage> {
 
     _receivePort = newReceivePort;
     _receivePort?.listen((message) {
-      _timeUpdateWork();
+      if (message == "ping") {
+        _timeUpdateWork();
+      } else {
+        setState(() {
+          parsedTill = message;
+        });
+      }
     });
 
     return _receivePort != null;

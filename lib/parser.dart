@@ -48,7 +48,7 @@ class LogParser {
     marvelAccID = playerID;
     parsingMetadata =
         ParsingMetadata.fromJson(jsonDecode(textualParsingMetadata));
-    final parsedTill = await _parserLoop(firstRun);
+    final parsedTill = await parserLoop(firstRun);
     return parsedTill;
   }
 
@@ -56,7 +56,7 @@ class LogParser {
     selectedUriDir = uriToSet;
   }
 
-  Future<DateTime?> _parserLoop(bool firstRun) async {
+  Future<DateTime?> parserLoop(bool firstRun) async {
     //print("doing inner loop!");
     /*print(selectedUriDir);
     print(marvelAccID);*/

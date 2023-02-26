@@ -7,7 +7,7 @@ import 'package:snap_tracker_app/parser.dart';
 class MyTaskHandler extends TaskHandler {
   SendPort? _sendPort;
   LogParser? _globalLogParser;
-  int _eventCount = 0;
+  bool _firstRun = true;
 
   @override
   Future<void> onStart(DateTime timestamp, SendPort? sendPort) async {
@@ -20,24 +20,22 @@ class MyTaskHandler extends TaskHandler {
   Future<void> onEvent(DateTime timestamp, SendPort? sendPort) async {
     //print('TaskHandler -- onEvent');
     try {
-      final parsedTillString =
-          await _globalLogParser?.runParser(_eventCount == 0);
+      final parsedTillString = _firstRun
+          ? await _globalLogParser?.runParser(true)
+          : await _globalLogParser?.parserLoop(false);
       if (parsedTillString != null) {
         final formattedDate =
             DateFormat('yyyy-MM-dd kk:mm:ss').format(parsedTillString);
         FlutterForegroundTask.updateService(
           notificationTitle: 'Marvel Snap Tracker',
-          notificationText: 'Tracker is running. Parsed till: $formattedDate',
+          notificationText: 'Parsed till: $formattedDate. Tracker is running.',
         );
+        sendPort?.send(formattedDate);
       }
     } catch (ex) {
       print(ex.toString());
     }
-
-    // Send data to the main isolate.
-    sendPort?.send('ping');
-
-    _eventCount++;
+    _firstRun = false;
   }
 
   @override
