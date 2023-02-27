@@ -18,21 +18,14 @@ class LogParser {
   Future<DateTime?> runParser(bool firstRun) async {
     //print("starting parser!!!");
     final pref = await SharedPreferences.getInstance();
-    final storedParsingMetadata = pref.getString('parsing_metadata');
-    String textualParsingMetadata = '';
-    if (storedParsingMetadata == null || firstRun) {
-      final response = await http.get(
-          Uri.parse('https://marvelsnap.pro/snap/json/parsing_metadata.json'));
 
-      if (response.statusCode != 200) {
-        return null;
-      }
-      await pref.setString('parsing_metadata', response.body);
-      textualParsingMetadata = response.body;
-    } else {
-      //print('loading metadata from perf');
-      textualParsingMetadata = storedParsingMetadata;
+    String textualParsingMetadata = '';
+    final response = await http.get(
+        Uri.parse('https://marvelsnap.pro/snap/json/parsing_metadata.json'));
+    if (response.statusCode != 200) {
+      return null;
     }
+    textualParsingMetadata = response.body;
 
     final scopeStoragePersistUrl = pref.getString('gameDataUri');
     if (scopeStoragePersistUrl == null) {

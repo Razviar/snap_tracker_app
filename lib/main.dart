@@ -170,18 +170,14 @@ class MyHomePageState extends State<MyHomePage> {
 
   Future<void> _readPlayerDataFromJson(bool initialTest) async {
     final String ver = await _getVersion();
-    setState(() {
-      AppVersion = ver;
-    });
 
-    bool? isBatteryOptimizationDisabled =
+    bool? batteryOptStatus =
         await DisableBatteryOptimization.isBatteryOptimizationDisabled;
 
-    if (isBatteryOptimizationDisabled == true) {
-      setState(() {
-        isBatteryOptimizationDisabled = true;
-      });
-    }
+    setState(() {
+      AppVersion = ver;
+      isBatteryOptimizationDisabled = batteryOptStatus == true;
+    });
 
     Uri? selectedUriDir;
     final pref = await SharedPreferences.getInstance();
@@ -232,20 +228,18 @@ class MyHomePageState extends State<MyHomePage> {
       return;
     }
 
-    final existingFile = await findFile(selectedUriDir, "ProfileState.json");
+    final profileStateFile =
+        await findFile(selectedUriDir, "ProfileState.json");
 
-    if (existingFile == null) {
+    if (profileStateFile == null) {
       return;
     }
 
-    /*print(existingFile.uri);
-    print(existingFile.type);
-    print(existingFile.lastModified);*/
-    final contents = await existingFile.getContentAsString();
+    final contents = await profileStateFile.getContentAsString();
     if (contents == null) {
       return;
     }
-    final lastModifiedDate = existingFile.lastModified;
+
     final bracketOpen = contents.indexOf("{");
     Map<String, dynamic> data =
         await json.decode(contents.substring(bracketOpen));
@@ -407,6 +401,28 @@ class MyHomePageState extends State<MyHomePage> {
     });
   }
 
+  Future<void> _doWipe() async {
+    await FlutterForegroundTask.stopService();
+    final pref = await SharedPreferences.getInstance();
+    await pref.clear();
+    setState(() {
+      playerNick = "";
+      playerNickNoHash = "";
+      playerID = "";
+      playerUID = "";
+      playerProNick = "";
+      playerProToken = "";
+      syncButtonText = "Sync Account!";
+      parsedTill = "";
+      requestCode = "";
+      isGameInstalled = false;
+      isGameFolderLoaded = false;
+      isLoggedIn = false;
+      isParserRunning = false;
+    });
+    _readPlayerDataFromJson(true);
+  }
+
   @override
   Widget build(BuildContext context) {
     // This method is rerun every time setState is called, for instance as done
@@ -500,27 +516,72 @@ class MyHomePageState extends State<MyHomePage> {
               Padding(
                 padding: const EdgeInsets.only(top: 80),
                 child: Column(
-                  children: isBatteryOptimizationDisabled
-                      ? []
-                      : [
-                          const Text('Troubleshooting'),
-                          MaterialButton(
-                              color: Colors.blueGrey,
-                              onPressed: () {
-                                DisableBatteryOptimization
-                                    .showDisableBatteryOptimizationSettings();
-                                setState(() {
-                                  isBatteryOptimizationDisabled = true;
-                                });
-                              },
-                              child: const Padding(
-                                padding: EdgeInsets.all(8.0),
-                                child: Text(
-                                  "Disable Battery Saving",
+                  children: [
+                    const Text('Troubleshooting'),
+                    isBatteryOptimizationDisabled
+                        ? const SizedBox(width: 0, height: 0)
+                        : MaterialButton(
+                            color: Colors.blueGrey,
+                            onPressed: () {
+                              DisableBatteryOptimization
+                                  .showDisableBatteryOptimizationSettings();
+                              setState(() {
+                                isBatteryOptimizationDisabled = true;
+                              });
+                            },
+                            child: const Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: Text(
+                                "Disable Battery Saving",
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            )),
+                    MaterialButton(
+                        color: Colors.blueGrey,
+                        onPressed: () async {
+                          final res = await showDialog(
+                            context: context,
+                            builder: (context) {
+                              return AlertDialog(
+                                backgroundColor:
+                                    const Color.fromARGB(255, 46, 54, 63),
+                                content: const Text(
+                                  'You are going to wipe all tracker settings. Use this only if you are having some issues and you need to repeat sync process from scratch.',
                                   style: TextStyle(color: Colors.white),
                                 ),
-                              ))
-                        ],
+                                actions: [
+                                  TextButton(
+                                    child: const Text('Cancel'),
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                  ),
+                                  TextButton(
+                                    child: const Text(
+                                      'Proceed with Wipe',
+                                      style: TextStyle(
+                                        color:
+                                            Color.fromARGB(255, 163, 93, 202),
+                                      ),
+                                    ),
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(true),
+                                  )
+                                ],
+                              );
+                            },
+                          );
+                          if (res) {
+                            _doWipe();
+                          }
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Text(
+                            "Wipe Tracker Settings",
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ))
+                  ],
                 ),
               )
             ])
