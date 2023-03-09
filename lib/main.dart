@@ -110,31 +110,33 @@ class MyHomePageState extends State<MyHomePage> {
   DateTime currentBackPressTime = DateTime.now();
 
   void _initForegroundTask() {
-    FlutterForegroundTask.init(
-      androidNotificationOptions: AndroidNotificationOptions(
-          channelId: 'snap-tracker-notification',
-          channelName: 'Snap Tracker',
-          channelDescription: 'Notifications from Snap Tracker',
-          channelImportance: NotificationChannelImportance.LOW,
-          priority: NotificationPriority.LOW,
+    try {
+      FlutterForegroundTask.init(
+        androidNotificationOptions: AndroidNotificationOptions(
+            channelId: 'snap-tracker-notification',
+            channelName: 'Snap Tracker',
+            channelDescription: 'Notifications from Snap Tracker',
+            channelImportance: NotificationChannelImportance.LOW,
+            priority: NotificationPriority.LOW,
+            playSound: false,
+            isSticky: true,
+            iconData: const NotificationIconData(
+                resType: ResourceType.drawable,
+                resPrefix: ResourcePrefix.ic,
+                name: "stat_logo_crop")),
+        iosNotificationOptions: const IOSNotificationOptions(
+          showNotification: true,
           playSound: false,
-          isSticky: true,
-          iconData: const NotificationIconData(
-              resType: ResourceType.drawable,
-              resPrefix: ResourcePrefix.ic,
-              name: "stat_logo_crop")),
-      iosNotificationOptions: const IOSNotificationOptions(
-        showNotification: true,
-        playSound: false,
-      ),
-      foregroundTaskOptions: const ForegroundTaskOptions(
-        interval: 4000,
-        isOnceEvent: false,
-        autoRunOnBoot: false,
-        allowWakeLock: true,
-        allowWifiLock: true,
-      ),
-    );
+        ),
+        foregroundTaskOptions: const ForegroundTaskOptions(
+          interval: 4000,
+          isOnceEvent: false,
+          autoRunOnBoot: false,
+          allowWakeLock: true,
+          allowWifiLock: true,
+        ),
+      );
+    } catch (ex) {}
   }
 
   bool _registerReceivePort(ReceivePort? newReceivePort) {
@@ -346,37 +348,47 @@ class MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _startTheParserGlobally() async {
-    await NotificationService().prepareNotifications();
-    //print('starting parser globally!');
-    setState(() {
-      parsedTill = "Launching tracker...";
-      isParserRunning = true;
-    });
+    try {
+      await NotificationService().prepareNotifications();
+      //print('starting parser globally!');
+      final ReceivePort? receivePort = FlutterForegroundTask.receivePort;
+      final bool isRegistered = _registerReceivePort(receivePort);
+      if (!isRegistered) {
+        return;
+      }
 
-    final ReceivePort? receivePort = FlutterForegroundTask.receivePort;
-    final bool isRegistered = _registerReceivePort(receivePort);
-    if (!isRegistered) {
-      //print('Failed to register receivePort!');
-      return;
+      //print(isRegistered);
+
+      if (await FlutterForegroundTask.isRunningService) {
+        setState(() {
+          isParserRunning = true;
+        });
+        return;
+      } else {
+        try {
+          final test = await FlutterForegroundTask.startService(
+            notificationTitle: 'Marvel Snap Tracker',
+            notificationText: 'Tracker is running.',
+            callback: startCallback,
+          );
+          Fluttertoast.showToast(msg: "Launched Tracker successfully!");
+          setState(() {
+            parsedTill = "Launching tracker...";
+            isParserRunning = true;
+          });
+        } catch (ex) {
+          setState(() {
+            parsedTill = "Error";
+            isParserRunning = false;
+          });
+          Fluttertoast.showToast(msg: "Failed to start parser task!");
+        }
+        return;
+      }
+    } catch (ex) {
+      Fluttertoast.showToast(
+          msg: "There's some issue with tracking on your device...");
     }
-
-    //print(isRegistered);
-
-    if (await FlutterForegroundTask.isRunningService) {
-      //print('is running');
-      return;
-    } else {
-      //print('starting service!');
-      final test = await FlutterForegroundTask.startService(
-        notificationTitle: 'Marvel Snap Tracker',
-        notificationText: 'Tracker is running.',
-        callback: startCallback,
-      );
-      //print(test);
-      return;
-    }
-
-    //Timer.periodic(const Duration(seconds: 10), _timerWork);
   }
 
   Future<void> _timeUpdateWork() async {
@@ -395,10 +407,15 @@ class MyHomePageState extends State<MyHomePage> {
 
   Future<void> _stopTheParserGlobally() async {
     //print('stopping parser globally!');
-    await FlutterForegroundTask.stopService();
-    setState(() {
-      isParserRunning = false;
-    });
+    try {
+      await FlutterForegroundTask.stopService();
+      setState(() {
+        isParserRunning = false;
+      });
+      Fluttertoast.showToast(msg: "Tracker is stopped!");
+    } catch (ex) {
+      Fluttertoast.showToast(msg: "Failed to stop parser task!");
+    }
   }
 
   Future<void> _doWipe() async {
@@ -511,6 +528,38 @@ class MyHomePageState extends State<MyHomePage> {
                           style: const TextStyle(color: Colors.white),
                         )
                       ])),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: MaterialButton(
+                  onPressed: () async {
+                    try {
+                      if (!isParserRunning) {
+                        await _startTheParserGlobally();
+                      }
+                      AppCheck.launchApp("com.nvsgames.snap");
+                    } catch (ex) {
+                      Fluttertoast.showToast(msg: "Something went wrong...");
+                    }
+                  },
+                  color: const Color.fromARGB(255, 163, 93, 202),
+                  child: SizedBox(
+                    width: 200,
+                    child: Center(
+                        child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: const [
+                          Padding(
+                            padding: EdgeInsets.only(right: 8),
+                            child: Icon(Icons.gamepad, color: Colors.white),
+                          ),
+                          Text(
+                            'Launch SNAP!',
+                            style: TextStyle(color: Colors.white),
+                          )
+                        ])),
+                  ),
                 ),
               ),
               Padding(
@@ -680,7 +729,7 @@ class MyHomePageState extends State<MyHomePage> {
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     TextSpan(
                         text:
-                            " This app is useful only if you have Marvel Snap installed on your phone. Please install the game, run it at least once and restart the tracker."),
+                            "This app is useful only if you have Marvel Snap installed on your phone. Please install the game, run it at least once and restart the tracker."),
                   ],
                 )),
               ),
