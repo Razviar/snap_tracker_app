@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:shared_storage/saf.dart';
+import 'package:shared_storage/shared_storage.dart';
 import 'parsing_metadata_model.dart';
 
 class LogParser {
@@ -20,8 +21,9 @@ class LogParser {
     final pref = await SharedPreferences.getInstance();
 
     String textualParsingMetadata = '';
-    final response = await http.get(
-        Uri.parse('https://marvelsnap.pro/snap/json/parsing_metadata.json'));
+    final rng = Random();
+    final response = await http.get(Uri.parse(
+        'https://marvelsnap.pro/snap/json/parsing_metadata.json?anticache=${rng.nextInt(100)}'));
     if (response.statusCode != 200) {
       return null;
     }
@@ -354,7 +356,7 @@ class LogParser {
   Future<void> UploadToServer(List<Map<String, dynamic>> eventsToSend) async {
     PackageInfo packageInfo = await PackageInfo.fromPlatform();
     String version = packageInfo.version;
-    final response = await http.post(
+    await http.post(
       Uri.parse(
           'https://marvelsnap.pro/snap/donew2.php?cmd=cm_uploadpackfile&version=${version}m'),
       headers: <String, String>{

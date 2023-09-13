@@ -10,8 +10,8 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:shared_storage/saf.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_storage/shared_storage.dart';
 import 'package:snap_tracker_app/apiModels.dart';
 import 'package:snap_tracker_app/notification_service.dart';
 import 'package:snap_tracker_app/status.dart';
@@ -150,6 +150,11 @@ class MyHomePageState extends State<MyHomePage> {
     _receivePort?.listen((message) {
       if (message == "ping") {
         _timeUpdateWork();
+      } else if (message == "game_not_running") {
+        setState(() {
+          isParserRunning = false;
+        });
+        Fluttertoast.showToast(msg: "Tracker is stopped!");
       } else {
         setState(() {
           parsedTill = message;
@@ -366,7 +371,7 @@ class MyHomePageState extends State<MyHomePage> {
         return;
       } else {
         try {
-          final test = await FlutterForegroundTask.startService(
+          await FlutterForegroundTask.startService(
             notificationTitle: 'Marvel Snap Tracker',
             notificationText: 'Tracker is running.',
             callback: startCallback,
@@ -544,12 +549,12 @@ class MyHomePageState extends State<MyHomePage> {
                     }
                   },
                   color: const Color.fromARGB(255, 163, 93, 202),
-                  child: SizedBox(
+                  child: const SizedBox(
                     width: 200,
                     child: Center(
                         child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
-                            children: const [
+                            children: [
                           Padding(
                             padding: EdgeInsets.only(right: 8),
                             child: Icon(Icons.gamepad, color: Colors.white),
@@ -676,9 +681,9 @@ class MyHomePageState extends State<MyHomePage> {
   Column LocateSNAP() {
     return Column(
       children: [
-        Row(
+        const Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
+          children: [
             Image(width: 130, image: AssetImage('images/Screenshot_1.jpg')),
             Image(width: 130, image: AssetImage('images/Screenshot_2.jpg')),
           ],

@@ -8,6 +8,8 @@ class MyTaskHandler extends TaskHandler {
   SendPort? _sendPort;
   LogParser? _globalLogParser;
   bool _firstRun = true;
+  int _runningWithNoChange = 0;
+  DateTime? _prevDate;
 
   @override
   Future<void> onStart(DateTime timestamp, SendPort? sendPort) async {
@@ -17,20 +19,34 @@ class MyTaskHandler extends TaskHandler {
   }
 
   @override
-  Future<void> onEvent(DateTime timestamp, SendPort? sendPort) async {
+  void onRepeatEvent(DateTime timestamp, SendPort? sendPort) async {
     //print('TaskHandler -- onEvent');
     try {
-      final parsedTillString = _firstRun
+      final parsedTill = _firstRun
           ? await _globalLogParser?.runParser(true)
           : await _globalLogParser?.parserLoop(false);
-      if (parsedTillString != null) {
-        final formattedDate =
-            DateFormat('yyyy-MM-dd kk:mm:ss').format(parsedTillString);
-        FlutterForegroundTask.updateService(
-          notificationTitle: 'Marvel Snap Tracker',
-          notificationText: 'Parsed till: $formattedDate. Tracker is running.',
-        );
-        sendPort?.send(formattedDate);
+      if (parsedTill != null) {
+        if (_prevDate == parsedTill) {
+          _runningWithNoChange += 4;
+        } else {
+          _runningWithNoChange = 0;
+          _prevDate = parsedTill;
+
+          final formattedDate =
+              DateFormat('yyyy-MM-dd kk:mm:ss').format(parsedTill);
+          FlutterForegroundTask.updateService(
+            notificationTitle: 'Marvel Snap Tracker',
+            notificationText:
+                'Parsed till: $formattedDate. Tracker is running.',
+          );
+          sendPort?.send(formattedDate);
+        }
+
+        if (_runningWithNoChange >= 1200) {
+          _runningWithNoChange = 0;
+          await FlutterForegroundTask.stopService();
+          sendPort?.send('game_not_running');
+        }
       }
     } catch (ex) {
       print(ex.toString());
